@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import '../models/app_models.dart';
 import '../data/mock_database.dart';
+import '../main.dart'; // <--- NEW: Insert this to access isStardewTheme
 
 class CategoryManagerScreen extends StatefulWidget {
   const CategoryManagerScreen({super.key});
@@ -43,21 +44,26 @@ class _CategoryManagerScreenState extends State<CategoryManagerScreen> {
               ),
               actions: [
                 TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+// REPLACE the ElevatedButton in _showCategoryDialog actions
                 ElevatedButton(
-                  onPressed: () {
-                    setState(() {
-                      if (isEdit) {
-                        existingCategory.name = nameController.text;
-                        existingCategory.location = selectedLoc;
-                      } else {
-                        allCategories.add(IngredientCategory(
-                          id: generateId(),
-                          name: nameController.text,
-                          location: selectedLoc,
-                        ));
-                      }
-                    });
-                    Navigator.pop(context);
+                  onPressed: () async {
+                    if (nameController.text.isEmpty) return; // Basic validation
+                    
+                    if (isEdit) {
+                      existingCategory.name = nameController.text;
+                      existingCategory.location = selectedLoc;
+                      await existingCategory.save(); // HIVE: Save changes to disk
+                    } else {
+                      final newCat = IngredientCategory(
+                        id: generateId(),
+                        name: nameController.text,
+                        location: selectedLoc,
+                      );
+                      await categoryBox.put(newCat.id, newCat); // HIVE: Save new category to disk
+                    }
+                    
+                    setState(() => syncMemoryWithHive()); // SYNC
+                    if (context.mounted) Navigator.pop(context);
                   },
                   child: const Text('Save'),
                 ),
@@ -69,10 +75,37 @@ class _CategoryManagerScreenState extends State<CategoryManagerScreen> {
     );
   }
 
+  Future<void> _deleteCategory(IngredientCategory category) async {
+    // HIVE: Delete category from disk completely
+    await category.delete(); 
+    
+    // Note: If you want to be extremely safe, you could also find all ingredients 
+    // that belong to this category and delete them or move them to a default category here.
+    
+    setState(() => syncMemoryWithHive());
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Manage Categories')),
+      // REPLACE the appBar inside Scaffold
+      appBar: AppBar(
+        title: const Text('Manage Categories'),
+        backgroundColor: Theme.of(context).appBarTheme.backgroundColor, // Theme support
+        actions: [
+          // Theme Toggle Button
+          ValueListenableBuilder<bool>(
+            valueListenable: isStardewTheme,
+            builder: (context, isStardew, child) {
+              return IconButton(
+                icon: Icon(isStardew ? Icons.auto_awesome_motion : Icons.videogame_asset),
+                tooltip: 'Switch Theme',
+                onPressed: () => isStardewTheme.value = !isStardewTheme.value,
+              );
+            },
+          ),
+        ],
+      ),
       body: ListView.builder(
         itemCount: allCategories.length,
         itemBuilder: (context, index) {
@@ -81,9 +114,18 @@ class _CategoryManagerScreenState extends State<CategoryManagerScreen> {
             leading: const Icon(Icons.folder),
             title: Text(cat.name),
             subtitle: Text('Location: ${cat.location.displayName}'),
-            trailing: IconButton(
-              icon: const Icon(Icons.edit),
-              onPressed: () => _showCategoryDialog(existingCategory: cat),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.edit, color: Colors.blue),
+                  onPressed: () => _showCategoryDialog(existingCategory: cat),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.delete, color: Colors.red),
+                  onPressed: () => _deleteCategory(cat),
+                ),
+              ],
             ),
           );
         },
